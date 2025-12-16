@@ -1,0 +1,24 @@
+// ==================================== Boot or Idle state before initialisation ==================
+define IDLE_COLOUR				0x341B00	// LEDs at minimum value so the control surfaces appear to be in an 'off' state until initialisation
+
+// ==================================== Initial Colours ===========================================
+// Defining the colours we want when we press our button to inisialise our lighting 
+// ACTKEYON does not work with the SOL-R product line 
+define INIT_BASE_RING	0xFDA44C	// <- replace with your choice for index 8
+define INIT_FRONT		0xFDA44C	// <- replace with your choice for index 9
+define INIT_HAT		0xFDA44C	// <- replace with your choice for index 10
+
+// ==================================== Standard Colours ==========================================
+define GREEN_COLOUR	0x00FFC0
+define ORANGE_COLOUR	0X0066FF
+define PURPLE_COLOUR	0xD1006B
+define RED_COLOUR		0x0000B5
+define YELLOW_COLOUR	0x00C0FF	// missile / physical mode B23
+
+// ================================= ? Special Colours ? =========================================
+// I call these special colours but really they're defined names that match modes in game
+// Eg when master mode switches to Quantum / NAV we can easily define and cycle colours we set here
+define QUANTUM_COLOR	0xFFCA1B	// This is bright cyan
+define NAVM_COLOUR		0X0066FF	// Same as ORANGE_COLOUR
+define DOWN_COLOR		0x00FFC0	// Same as GREEN_COLOUR
+define UP_COLOR		0xFDA44C	// Same as INIT_BASE_RING

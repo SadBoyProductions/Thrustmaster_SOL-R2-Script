@@ -1,0 +1,791 @@
+//SOL-R LED + DX Toggle Script
+//Authors Gar and AVA
+//Toggles color state per button
+//NOTE - Thrustmaster uses BGR values instead of RGB values, so when your normal hex is the wrong color, adjust your sets to BGR and it should look fine.
+
+// -------------------------------- LED + BUTTON LEGEND --------------------------------
+// LED numbering refers to Thrustmaster's internal mapping for Sol_R
+//
+// BUTTON -> DX     -> LED Index -> Description
+// SOL_B5  -> DX5   -> 0          -> Toggles RED/BLUE 
+// SOL_B6  -> DX6   -> 1          -> Toggles RED/BLUE 
+// SOL_B7  -> DX7   -> 2          -> Toggles RED/BLUE 
+// SOL_B8  -> DX8   -> 3          -> Toggles RED/BLUE 
+// SOL_B17 -> DX17  -> 4          -> Toggles RED/BLUE 
+// SOL_B16 -> DX16  -> 5          -> Toggles RED/BLUE 
+// SOL_B19 -> DX19  -> 6          -> Toggles RED/BLUE
+// SOL_B18 -> DX18  -> 7          -> Toggles RED/BLUE
+// SG26    -> DX26  -> 10         -> Cycles Upper Stick LED color based on SG27 mode:
+//                                   RED mode: RED ? ORANGE ? YELLOW
+//                                   BLUE mode: BLUE ? GREEN ? PURPLE
+// SG27    -> DX27  -> 10         -> Toggles RED/BLUE base mode (affects SG26 cycle)
+
+// I have added to this script extensively so thanks to the OG authors Gar and AVA for getting me started.
+// SimplySketchyGT in SC - STAR-XQCK-LC9C
+
+include "target.tmh"
+include "Custom Defines.tmh"
+
+// ============================================================================
+// Global state
+// ============================================================================
+
+// Separate toggle variables per button
+int toggle_b1  = 0;
+int toggle_b2  = 0;
+int toggle_b5  = 0;
+int toggle_b6  = 0;
+int toggle_b7  = 0;
+int toggle_b8  = 0;
+int toggle_b12 = 0;
+int toggle_b16 = 0;
+int toggle_b17 = 0;
+int toggle_b18 = 0;
+int toggle_b19 = 0;
+int toggle_b20 = 0;
+int toggle_b21 = 0;
+int toggle_b22 = 0;
+int toggle_b23 = 0;
+int toggle_b26 = 0;
+int toggle_b27 = 0;
+
+int state_b1  = 0;		// 0 = Off (base colour) 1 = On (headlights / logo etc.)
+int state_b2  = 0;
+int state_b7  = 0;		// 0 = Green (flight systems ready) 1/2 = Red (engaged)
+int state_b12 = 0;		// 0 = Green (gear down)
+int state_b23 = 0;		// 0 = missile mode off, 1 = missile mode on
+int state_b26 = 0;		// Custom cycle state for SG26
+
+int leds_initialised = 0;	// 0 = LED init not done, 1 = initialised
+
+// Modes and conditions
+int sg24_pending = 0;
+int master_mode  = 0;		// 0 = normal, 1 = master mode active
+int sg25_ran     = 0;		// 0 = no effect running, 1 = this press ran the quantum blink
+int gear_state   = 0;		// 0 = down (green), 1 = up (INIT_COLOUR)
+int nav_mode     = 0;		// 0 = inactive, 1 = NAV active
+int mode_b23     = 0;		// 0 = not in B23, 1 = SOL_B23 (missile mode) active
+
+// int for colours inside EXEC (if you still want them)
+int quantum_color_exec = 0xFFCA1B;	// EXEC-visible version
+int green_color_exec   = 0x00FFC0;	// your green
+
+
+// ============================================================================
+// main
+// ============================================================================
+
+int main()
+{
+	SetKBRate(32, 50);
+	SetKBLayout(KB_ENG);
+	SetShiftButton(0, 0, 0, 0, 0, 0);	// Disable all shift buttons
+
+	// Exclude all other devices except the ones we are using
+	Configure(&HCougar, MODE_EXCLUDED);
+	Configure(&Joystick, MODE_EXCLUDED);
+	Configure(&JoystickF18, MODE_EXCLUDED);
+	Configure(&Throttle, MODE_EXCLUDED);
+	Configure(&A320Pilot, MODE_EXCLUDED);
+	Configure(&A320Copilot, MODE_EXCLUDED);
+	Configure(&TCAQuadrant12, MODE_EXCLUDED);
+	Configure(&TCAQuadrant34, MODE_EXCLUDED);
+	Configure(&TCAYokeBoeing, MODE_EXCLUDED);
+	Configure(&TCAQBoeing12, MODE_EXCLUDED);
+	Configure(&TCAQBoeing34, MODE_EXCLUDED);
+	Configure(&TCASidestickXPilot, MODE_EXCLUDED);
+	Configure(&TCASidestickXCopilot, MODE_EXCLUDED);
+	Configure(&ViperTQS, MODE_EXCLUDED);
+	Configure(&ViperBBox, MODE_EXCLUDED);
+	Configure(&FarmStickRight, MODE_EXCLUDED);
+	Configure(&FarmStickLeft, MODE_EXCLUDED);
+	Configure(&FarmStickXboxRight, MODE_EXCLUDED);
+	Configure(&FarmStickXboxLeft, MODE_EXCLUDED);
+	Configure(&Sol_F16, MODE_EXCLUDED);
+	Configure(&Sol_F18, MODE_EXCLUDED);
+	Configure(&Sol_F16L, MODE_EXCLUDED);
+	Configure(&Sol_F18L, MODE_EXCLUDED);
+	Configure(&AVA_F16, MODE_EXCLUDED);
+	Configure(&AVA_F18, MODE_EXCLUDED);
+	Configure(&AVA_SolR, MODE_EXCLUDED);
+	Configure(&AVA_F16L, MODE_EXCLUDED);
+	Configure(&AVA_F18L, MODE_EXCLUDED);
+	Configure(&AVA_SolRL, MODE_EXCLUDED);
+	Configure(&T16000, MODE_EXCLUDED);
+	Configure(&T16000L, MODE_EXCLUDED);
+	Configure(&LMFD, MODE_EXCLUDED);
+	Configure(&RMFD, MODE_EXCLUDED);
+	Configure(&TFRPRudder, MODE_EXCLUDED);
+	Configure(&TWCSThrottle, MODE_EXCLUDED);
+	Configure(&TFRPHARudder, MODE_EXCLUDED);
+	
+	// Keep both of our SOL devices enabled to control LEDs on both
+	Configure(&Sol_SolR,  MODE_KEEPENABLED);
+	Configure(&Sol_SolRL, MODE_KEEPENABLED);
+	//Configure(&Sol_SolRL, MODE_EXCLUDED);
+	
+	if(Init(&EventHandle)) return 1;	// Initialize and exit if failed
+	
+
+	// =========================================================================
+	// PRE-INIT IDLE + INITIAL LED COLOURS
+	// =========================================================================
+
+	// B21 (LEFT base) – pre-init idle state
+	MapKey(&Sol_SolRL, SOL_B21,
+		EXEC(
+			"if(leds_initialised == 0) {"
+				// Right stick: base ring, front, hat
+				"LED_control(0x422, 8, IDLE_COLOUR);"
+				"LED_control(0x422, 9, IDLE_COLOUR);"
+				"LED_control(0x422,10, IDLE_COLOUR);"
+
+				// Left stick: base ring, front, hat
+				"LED_control(0x42A, 8, IDLE_COLOUR);"
+				"LED_control(0x42A, 9, IDLE_COLOUR);"
+				"LED_control(0x42A,10, IDLE_COLOUR);"
+			"}"
+		)
+	);
+
+	// B23 (LEFT base) – INITIALISE LEDS + WHITE HAT FLASH (only once)
+	MapKey(&Sol_SolRL, SOL_B23,
+		CHAIN(
+			// 1) Set full initial LED pattern (both sticks)
+			EXEC(
+				"if(leds_initialised == 0) {"
+					// ===== RIGHT STICK (0x422) =====
+					"LED_control(0x422, 0, 0xFDA44C);"    // B5
+					"LED_control(0x422, 1, 0xFDA44C);"    // B6
+					"LED_control(0x422, 2, 0x00FF30);"    // B7
+					"LED_control(0x422, 3, 0xFDA44C);"    // B8
+					"LED_control(0x422, 4, 0xFDA44C);"    // B17
+					"LED_control(0x422, 5, 0x00FF30);"    // B16
+					"LED_control(0x422, 6, 0x00FF30);"    // B19
+					"LED_control(0x422, 7, 0x0066FF);"    // B18
+					"LED_control(0x422, 8, INIT_BASE_RING);"
+					"LED_control(0x422, 9, INIT_FRONT);"
+					"LED_control(0x422,10, INIT_HAT);"
+
+					// ===== LEFT STICK (0x42A) =====
+					"LED_control(0x42A, 0, 0xFDA44C);"
+					"LED_control(0x42A, 1, 0xFDA44C);"
+					"LED_control(0x42A, 2, 0xFDA44C);"
+					"LED_control(0x42A, 3, 0xFDA44C);"
+					"LED_control(0x42A, 4, 0xFDA44C);"
+					"LED_control(0x42A, 5, 0xFDA44C);"
+					"LED_control(0x42A, 6, 0xFDA44C);"
+					"LED_control(0x42A, 7, 0xFDA44C);"
+					"LED_control(0x42A, 8, DOWN_COLOR);"
+					"LED_control(0x42A, 9, INIT_FRONT);"
+					"LED_control(0x42A,10, INIT_HAT);"
+				"}"
+			),
+
+			// 2) White hat flashes (about ~1.5s total), still only if not initialised yet
+			EXEC(
+				"if(leds_initialised == 0) {"
+					"LED_control(0x422,10,0xFFFFFF);"
+					"LED_control(0x42A,10,0xFFFFFF);"
+				"}"
+			), D(150),
+
+			EXEC(
+				"if(leds_initialised == 0) {"
+					"LED_control(0x422,10,0x000000);"
+					"LED_control(0x42A,10,0x000000);"
+				"}"
+			), D(150),
+
+			EXEC(
+				"if(leds_initialised == 0) {"
+					"LED_control(0x422,10,0xFFFFFF);"
+					"LED_control(0x42A,10,0xFFFFFF);"
+				"}"
+			), D(150),
+
+			EXEC(
+				"if(leds_initialised == 0) {"
+					"LED_control(0x422,10,0x000000);"
+					"LED_control(0x42A,10,0x000000);"
+				"}"
+			), D(150),
+
+			// 3) Restore hats to INIT_HAT and mark init complete
+			EXEC(
+				"if(leds_initialised == 0) {"
+					"LED_control(0x422,10,INIT_HAT);"
+					"LED_control(0x42A,10,INIT_HAT);"
+					"leds_initialised = 1;"
+				"}"
+			)
+		)
+	);
+
+
+	// =========================================================================
+	// RIGHT STICK (Sol_SolR, PID 0x422)
+	// =========================================================================
+
+	// Quantum on B1 – only changes LEDs when master_mode == 1, always sends DX1
+	MapKey(&Sol_SolR, SOL_B1,
+		CHAIN(
+			DX1,
+			EXEC(
+				"if(master_mode == 1) {"
+					// We are explicitly in Quantum now
+					"nav_mode = 0;"
+					"LED_control(0x422, 8, QUANTUM_COLOR);"	// base ring
+					"LED_control(0x422, 9, QUANTUM_COLOR);"	// front light
+					"LED_control(0x422,10, QUANTUM_COLOR);"	// hat light
+					"state_b1 = 1;"
+				"}"
+			)
+		)
+	);
+
+	// NAV – only changes LEDs when master_mode == 1, always sends DX2
+	MapKey(&Sol_SolR, SOL_B2,
+		CHAIN(
+			DX2,
+			EXEC(
+				"if(master_mode == 1) {"
+					"nav_mode = 1;"
+					"LED_control(0x422, 8, ORANGE_COLOUR);"	// base ring
+					"LED_control(0x422, 9, ORANGE_COLOUR);"	// front light
+					"LED_control(0x422,10, ORANGE_COLOUR);"	// hat light
+					"state_b2 = 1;"
+				"}"
+			)
+		)
+	);
+
+	// Request Cargo – B5: light yellow while held, return to init on release
+	MapKey(&Sol_SolR, SOL_B5,
+		CHAIN(
+			DX5,
+			EXEC(
+				"LED_control(0x422, 0, YELLOW_COLOUR);"	// idx 0 = SOL_B5
+			)
+		)
+	);
+	MapKeyR(&Sol_SolR, SOL_B5,
+		EXEC(
+			"LED_control(0x422, 0, 0xFDA44C);"		// back to initial colour
+		)
+	);
+
+	// Request Dock – B6: light yellow while held, return to init on release
+	MapKey(&Sol_SolR, SOL_B6,
+		CHAIN(
+			DX6,
+			EXEC(
+				"LED_control(0x422, 1, YELLOW_COLOUR);"	// idx 1 = SOL_B6
+			)
+		)
+	);
+	MapKeyR(&Sol_SolR, SOL_B6,
+		EXEC(
+			"LED_control(0x422, 1, 0xFDA44C);"		// back to initial colour
+		)
+	);
+
+	// Flight Systems Ready (B7) – 3-state cycle: Green -> Red(1) -> Red(2) -> Green
+	MapKey(&Sol_SolR, SOL_B7,
+		CHAIN(
+			EXEC(
+				"if(state_b7 == 0) {"
+					// 0 -> 1: safe (green) -> engaged step 1 (red)
+					"LED_control(0x422, 2, 0x0000B5);"	// red
+					"state_b7 = 1;"
+				"} else if(state_b7 == 1) {"
+					// 1 -> 2: engaged step 1 -> engaged step 2 (still red)
+					"LED_control(0x422, 2, 0x0000B5);"	// still red
+					"state_b7 = 2;"
+				"} else {"
+					// 2 -> 0: engaged step 2 -> safe (green)
+					"LED_control(0x422, 2, 0x00FF30);"	// green
+					"state_b7 = 0;"
+				"}"
+			),
+			DX7
+		)
+	);
+
+	// Weapon Settings
+	MapKey(&Sol_SolR, SOL_B8,
+		CHAIN(
+			EXEC("toggle_b8 = !toggle_b8; if(toggle_b8) LED_control(0x422, 3, 0xD1006B); else LED_control(0x422, 3, 0xFDA44C);"),
+			DX8
+		)
+	);
+
+	// GSafe
+	MapKey(&Sol_SolR, SOL_B16,
+		CHAIN(
+			EXEC("toggle_b16 = !toggle_b16; if(toggle_b16) LED_control(0x422, 5, 0x0066FF); else LED_control(0x422, 5, 0x00FF30);"),
+			DX16
+		)
+	);
+
+	// E.S.P
+	MapKey(&Sol_SolR, SOL_B17,
+		CHAIN(
+			EXEC("toggle_b17 = !toggle_b17; if(toggle_b17) LED_control(0x422, 4, 0x00C0FF); else LED_control(0x422, 4, 0xFDA44C);"),
+			DX17
+		)
+	);
+
+	// VTOL
+	MapKey(&Sol_SolR, SOL_B18,
+		CHAIN(
+			EXEC("toggle_b18 = !toggle_b18; if(toggle_b18) LED_control(0x422, 7, 0x00FF30); else LED_control(0x422, 7, 0x0066FF);"),
+			DX18
+		)
+	);
+
+	// Gimbal Lock
+	MapKey(&Sol_SolR, SOL_B19,
+		CHAIN(
+			EXEC("toggle_b19 = !toggle_b19; if(toggle_b19) LED_control(0x422, 6, 0x0066FF); else LED_control(0x422, 6, 0x00FF30);"),
+			DX19
+		)
+	);
+
+	// Physical mode switch positions – B20/B21/B22 clear missile mode flag (mode_b23)
+	MapKey(&Sol_SolR, SOL_B21,
+		CHAIN(
+			DX21,
+			EXEC("mode_b23 = 0;")
+		)
+	);
+
+	MapKey(&Sol_SolR, SOL_B22,
+		CHAIN(
+			DX22,
+			EXEC("mode_b23 = 0;")
+		)
+	);
+
+	// SG35 – missile fire: blink hat between yellow and red while held in B23
+	MapKey(&Sol_SolR, SOL_SG35,
+		CHAIN(
+			DX35,
+			// Ensure starting from yellow when in B23
+			EXEC(
+				"if(mode_b23 == 1) {"
+					"LED_control(0x422,10,YELLOW_COLOUR);"
+				"}"
+			),
+			// Blink 1: red -> yellow
+			EXEC(
+				"if(mode_b23 == 1) {"
+					"LED_control(0x422,10,RED_COLOUR);"
+				"}"
+			), D(250),
+			EXEC(
+				"if(mode_b23 == 1) {"
+					"LED_control(0x422,10,YELLOW_COLOUR);"
+				"}"
+			), D(250),
+			// Blink 2
+			EXEC(
+				"if(mode_b23 == 1) {"
+					"LED_control(0x422,10,RED_COLOUR);"
+				"}"
+			), D(250),
+			EXEC(
+				"if(mode_b23 == 1) {"
+					"LED_control(0x422,10,YELLOW_COLOUR);"
+				"}"
+			), D(150),
+			// Blink 3
+			EXEC(
+				"if(mode_b23 == 1) {"
+					"LED_control(0x422,10,RED_COLOUR);"
+				"}"
+			), D(75),
+			EXEC(
+				"if(mode_b23 == 1) {"
+					"LED_control(0x422,10,YELLOW_COLOUR);"
+				"}"
+			)
+		)
+	);
+
+	// SG35 release – restore hat LED to correct mode colour
+	MapKeyR(&Sol_SolR, SOL_SG35,
+		EXEC(
+			"if(mode_b23 == 1) {"
+				// In physical B23 mode, hat must be yellow
+				"LED_control(0x422,10,YELLOW_COLOUR);"
+			"} else if(master_mode == 1) {"
+				"if(nav_mode == 1) {"
+					// NAV mode
+					"LED_control(0x422,10,ORANGE_COLOUR);"
+				"} else {"
+					// Quantum mode
+					"LED_control(0x422,10,QUANTUM_COLOR);"
+				"}"
+			"} else {"
+				// No master mode / base behaviour
+				"LED_control(0x422,10,INIT_HAT);"
+			"}"
+		)
+	);
+
+	// B20 = normal mode (allows master mode, restores init colours when master off)
+	MapKey(&Sol_SolR, SOL_B20,
+		CHAIN(
+			DX20,
+			EXEC(
+				"mode_b23 = 0;"
+				// Only repaint when master mode is OFF
+				"if(master_mode == 0) {"
+					"LED_control(0x422, 8, INIT_BASE_RING);"
+					"LED_control(0x422, 9, INIT_FRONT);"
+					"LED_control(0x422,10, INIT_HAT);"
+				"}"
+			)
+		)
+	);
+
+	// B23 = missile / special physical mode (right base)
+	MapKey(&Sol_SolR, SOL_B23,
+		CHAIN(
+			DX23,
+			EXEC(
+				"mode_b23 = 1;"
+				// Only repaint yellow when NOT in master mode
+				"if(master_mode == 0) {"
+					"LED_control(0x422, 8, YELLOW_COLOUR);"
+					"LED_control(0x422, 9, YELLOW_COLOUR);"
+					"LED_control(0x422,10, YELLOW_COLOUR);"
+				"}"
+			)
+		)
+	);
+
+	// Right SOL: hat LED (index 10) = Red while SG24 held [firing weapons]
+	// PRESS edge
+	MapKey(&Sol_SolR, SOL_SG24,
+		CHAIN(
+			EXEC("sg24_pending = 1;"),	// mark that a LED change is pending
+			DX24,						// instant DX to the game
+			D(100),						// wait 100 ms
+			EXEC(
+				"if(sg24_pending) {"
+					"LED_control(0x422, 10, RED_COLOUR);"
+				"}"
+			)
+		)
+	);
+
+	// SG24 – restore hat LED correctly on release (master overrides missile)
+	MapKeyR(&Sol_SolR, SOL_SG24,
+		EXEC(
+			"sg24_pending = 0;"
+			"if(master_mode == 1) {"
+				"if(nav_mode == 1) {"
+					// NAV under master
+					"LED_control(0x422,10,ORANGE_COLOUR);"
+				"} else {"
+					// Quantum under master
+					"LED_control(0x422,10,QUANTUM_COLOR);"
+				"}"
+			"} else if(mode_b23 == 1) {"
+				// Missile mode only matters when master is OFF
+				"LED_control(0x422,10,YELLOW_COLOUR);"
+			"} else {"
+				// No master, no missile
+				"LED_control(0x422,10,INIT_HAT);"
+			"}"
+		)
+	);
+
+	// Right SOL SG25 — mode-aware trigger feedback
+	// Quantum mode: blink GREEN, return QUANTUM_COLOR
+	// NAV mode: blink RED, return ORANGE_COLOUR (trigger locked)
+	MapKey(&Sol_SolR, SOL_SG25,
+		CHAIN(
+			DX25,
+			// Ensure we start from the correct mode colour
+			EXEC(
+				"if(master_mode == 1) {"
+					"if(nav_mode == 1) {"
+						"LED_control(0x422,10,ORANGE_COLOUR);"
+					"} else {"
+						"LED_control(0x422,10,QUANTUM_COLOR);"
+					"}"
+				"}"
+			),
+			// Blink 1
+			EXEC(
+				"if(master_mode == 1) {"
+					"if(nav_mode == 1) {"
+						"LED_control(0x422,10,RED_COLOUR);"
+					"} else {"
+						"LED_control(0x422,10,GREEN_COLOUR);"
+					"}"
+				"}"
+			), D(150),
+			EXEC(
+				"if(master_mode == 1) {"
+					"if(nav_mode == 1) {"
+						"LED_control(0x422,10,ORANGE_COLOUR);"
+					"} else {"
+						"LED_control(0x422,10,QUANTUM_COLOR);"
+					"}"
+				"}"
+			), D(150),
+			// Blink 2
+			EXEC(
+				"if(master_mode == 1) {"
+					"if(nav_mode == 1) {"
+						"LED_control(0x422,10,RED_COLOUR);"
+					"} else {"
+						"LED_control(0x422,10,GREEN_COLOUR);"
+					"}"
+				"}"
+			), D(150),
+			EXEC(
+				"if(master_mode == 1) {"
+					"if(nav_mode == 1) {"
+						"LED_control(0x422,10,ORANGE_COLOUR);"
+					"} else {"
+						"LED_control(0x422,10,QUANTUM_COLOR);"
+					"}"
+				"}"
+			), D(150),
+			// Blink 3
+			EXEC(
+				"if(master_mode == 1) {"
+					"if(nav_mode == 1) {"
+						"LED_control(0x422,10,RED_COLOUR);"
+					"} else {"
+						"LED_control(0x422,10,GREEN_COLOUR);"
+					"}"
+				"}"
+			), D(150),
+			EXEC(
+				"if(master_mode == 1) {"
+					"if(nav_mode == 1) {"
+						"LED_control(0x422,10,ORANGE_COLOUR);"
+					"} else {"
+						"LED_control(0x422,10,QUANTUM_COLOR);"
+					"}"
+				"}"
+			)
+		)
+	);
+
+	// SG25 release — restore hat LED to the correct mode colour
+	MapKeyR(&Sol_SolR, SOL_SG25,
+		EXEC(
+			"if(master_mode == 1) {"
+				"if(nav_mode == 1) {"
+					"LED_control(0x422,10,ORANGE_COLOUR);"
+				"} else {"
+					"LED_control(0x422,10,QUANTUM_COLOR);"
+				"}"
+			"}"
+		)
+	);
+
+	// Master mode on SG39
+	MapKey(&Sol_SolR, SOL_SG39,
+		CHAIN(
+			D(300),
+			EXEC(
+				"if(mode_b23 == 0) {"
+					"if(master_mode == 0) {"
+						// Turn master ON – default to Quantum
+						"master_mode = 1;"
+						"nav_mode = 0;"
+						"LED_control(0x422, 8, QUANTUM_COLOR);"
+						"LED_control(0x422, 9, QUANTUM_COLOR);"
+						"LED_control(0x422,10, QUANTUM_COLOR);"
+						"state_b1 = 1;"
+					"} else {"
+						// Turn master OFF
+						"master_mode = 0;"
+						"state_b1 = 0;"
+						"nav_mode = 0;"
+
+						// Restore either missile yellow or init colours
+						"if(mode_b23 == 1) {"
+							"LED_control(0x422, 8, YELLOW_COLOUR);"
+							"LED_control(0x422, 9, YELLOW_COLOUR);"
+							"LED_control(0x422,10, YELLOW_COLOUR);"
+						"} else {"
+							"LED_control(0x422, 8, INIT_BASE_RING);"
+							"LED_control(0x422, 9, INIT_FRONT);"
+							"LED_control(0x422,10, INIT_HAT);"
+						"}"
+					"}"
+
+					// Only send DX when master logic ran
+					"ActKey(PULSE+DX39);"
+				"}"
+			)
+		)
+	);
+
+
+	// =========================================================================
+	// LEFT STICK (Sol_SolRL, PID 0x42A)
+	// =========================================================================
+
+	// Headlights [Thrustmaster logo on base turns white to indicate headlights on]
+	MapKey(&Sol_SolRL, SOL_B1,
+		CHAIN(
+			EXEC("if(toggle_b1 == 0) { if(state_b1 == 0) { LED_control(0x42A, 9, 0xFFFFFF); state_b1 = 1; } else if(state_b1 == 1) { LED_control(0x42A, 9, INIT_FRONT); state_b1 = 0; } };"),
+			DX1
+		)
+	);
+
+	// Cycle Cam
+	MapKey(&Sol_SolRL, SOL_B5,
+		CHAIN(
+			EXEC("toggle_b5 = !toggle_b5; if(toggle_b5) LED_control(0x422, 4, 0x00C0FF); else LED_control(0x422, 4, 0xFDA44C);"),
+			DX5
+		)
+	);
+
+	// Landing Gear – long animation then settle based on gear_state
+	MapKey(&Sol_SolRL, SOL_B12,
+		CHAIN(
+			// 1) Toggle gear state first
+			EXEC("if(gear_state == 0) gear_state = 1; else gear_state = 0;"),
+
+			// ========== STAGE 1: SLOW 500 ms PULSES (about 5 seconds) ==========
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(500),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(500),
+
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(500),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(500),
+
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(500),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(500),
+
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(500),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(500),
+
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(500),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(500),
+
+			// ========== STAGE 2: MEDIUM 400 ms PULSES ==========================
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(400),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(400),
+
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(400),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(400),
+
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(400),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(400),
+
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(400),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(400),
+
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(300),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(300),
+
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(300),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(300),
+
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(300),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(300),
+
+			// ========== STAGE 3: RAPID DOUBLE-BLINK CYCLES =====================
+			// (You already tuned these timings)
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(80),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(120),
+
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(80),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(120),
+
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(80),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(120),
+
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(80),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(120),
+
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(80),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(120),
+
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(80),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(120),
+
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(80),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(120),
+
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(80),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(120),
+
+			EXEC("if(gear_state) LED_control(0x42A,8,DOWN_COLOR); else LED_control(0x42A,8,UP_COLOR);"), D(80),
+			EXEC("if(gear_state) LED_control(0x42A,8,UP_COLOR);   else LED_control(0x42A,8,DOWN_COLOR);"), D(120),
+
+			// Final steady colour based on new gear_state
+			EXEC(
+				"if(gear_state) "
+					"LED_control(0x42A,8,UP_COLOR); "
+				"else "
+					"LED_control(0x42A,8,DOWN_COLOR);"
+			),
+			DX12
+		)
+	);
+
+	return 0;
+
+
+// ============================================================================
+//Commenting out all of this as I don't use it
+// ============================================================================
+	// SG26 Custom conditional cycle logic for LED 10 based on SG27 state
+  	// This is just an example, and you could set this to any 2 buttons
+  	// When you fire up your ship, it defaults to WAR mode, which, for me, is RED.  You hit SG27 to swap to NAV mode, which is BLUE (I think of QT as being blue for some reason).
+  	// SG26 looks to see which mode you are in, then cycles through 3 different colors as you cycle from, say Guns to Missiles, to Scanning or whatever.  
+  	// THIS way you always have an instant visual as to what mode you're in that you can clearly see in your peripheral without taking your eyes off of the action (if the room is dark, anyway)
+  	// Just a quick FYI, LED 8 is the ring around the bottom of the stick and 9 is the TM logo in the front.
+  	// I'm trying to figure a way to read from SC directly to toggle the ring from red to green depending on if my landing gears are down.  THere's no great way to be sure otherwise, since going to QT will pull them in without a button toggle.
+  
+    // MapKey(&Sol_SolR, SOL_SG26, CHAIN(
+        // EXEC("if(toggle_b27 == 0) { if(state_b26 == 0) { LED_control(0x422, 10, 0x004DFF); state_b26 = 1; } else if(state_b26 == 1) { LED_control(0x422, 10, 0x00FFFF); state_b26 = 2; } else { LED_control(0x422, 10, 0x0000B5); state_b26 = 0; } } else { if(state_b26 == 0) { LED_control(0x422, 10, 0x00FF00); state_b26 = 1; } else if(state_b26 == 1) { LED_control(0x422, 10, 0xFF00FF); state_b26 = 2; } else { LED_control(0x422, 10, 0xFDA44C); state_b26 = 0; } }"),
+        // DX26
+    // ));
+
+    // MapKey(&Sol_SolR, SOL_SG27, CHAIN(
+       // EXEC("toggle_b27 = !toggle_b27; if(toggle_b27) { LED_control(0x422, 10, 0xFDA44C); state_b26 = 0; } else { LED_control(0x422, 10, 0x0000B5); state_b26 = 0; }"),
+       // DX27
+    // ));
+
+// ============================================================================
+// Event handler – default mapping
+// ============================================================================
+	//MapKey(&Sol_SolRL, SOL_SG37, AXIS(MOUSE_Z_AXIS, 1, 60));
+	//MapKey(&Sol_SolRL, SOL_SG38, AXIS(MOUSE_Z_AXIS, -1, 60));
+	//MapKey(&Sol_SolRL, SOL_SG28, L_SHIFT);
+	//MapKey(&Sol_SolRL, SOL_SG29, PULSE+F4);
+	//MapKey(&Sol_SolRL, SOL_SG35, PULSE+R_ALT+'o');
+	//MapKey(&Sol_SolRL, SOL_SG36, CHAIN(DOWN+TAB,D(250),UP+TAB));
+	
+	//KeyAxis(&Sol_SolRL, JOYX, 0, AXMAP2( LIST( 0, 45, 55 ), 'a', 0, 'd' ));
+	//KeyAxis(&Sol_SolRL, ROCKER, 0, AXMAP2( LIST( 0, 45, 55 ), L_CTL , 0, SPC ));
+	
+	
+	//MapAxis(&Sol_SolRL, JOYY, DX_Y_AXIS, AXIS_NORMAL, MAP_ABSOLUTE);
+	//SetSCurve(&Sol_SolRL, JOYY, 0, 0, 0, 0, 0);
+	//MapAxis(&Sol_SolRL, THROTTLE, DX_Z_AXIS, AXIS_NORMAL, MAP_ABSOLUTE);
+	//SetSCurve(&Sol_SolRL, THROTTLE, 0, 0, 0, 0, 0);
+	//MapAxis(&Sol_SolRL, DIAL, DX_SLIDER_AXIS, AXIS_NORMAL, MAP_ABSOLUTE);
+	//SetSCurve(&Sol_SolRL, DIAL, 0, 0, 0, 0, 0);
+	//MapAxis(&Sol_SolRL, MS_UD, DX_YROT_AXIS, AXIS_NORMAL, MAP_ABSOLUTE);
+	//SetSCurve(&Sol_SolRL, MS_UD, 0, 0, 0, 0, 0);
+	//MapAxis(&Sol_SolRL, SLIDER0, DX_THROTTLE_AXIS, AXIS_NORMAL, MAP_ABSOLUTE);
+	//SetSCurve(&Sol_SolRL, SLIDER0, 0, 0, 0, 0, 0);
+}
+int EventHandle(int type, alias o, int x)
+{
+	DefaultMapping(&o, x);
+}
